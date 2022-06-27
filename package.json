@@ -5,10 +5,11 @@
   "author": "Gustavo G Passos <girardi_gustavo@outlook.com>",
   "license": "MIT",
   "scripts": {
-    "dev":"nodemon src/server.js"
+    "dev": "nodemon src/server.js"
   },
   "dependencies": {
     "express": "^4.17.1",
+    "mongoose": "^6.4.0",
     "uuid": "^8.3.2"
   },
   "devDependencies": {

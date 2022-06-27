@@ -1,11 +1,12 @@
 const express = require('express');
-const {v4: uuidv4} = require('uuid');
-
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 
-app.use(express.json());
+const mongoose = require("./utils/database")(app);
+const User = require("./models/User");
 
+app.use(express.json());
 
 const users = [];
 
@@ -13,13 +14,13 @@ const users = [];
  * função que verifica se o usuário existe
  * usada como middleware nas demais funções 
  */
-function checkUserExists(req,res,next){
-  const {username} = req.headers;
+async function checkUserExists(req, res, next) {
+  const { username } = req.headers;
 
-  const user = users.find((user)=>user.username===username);
+  const user = await User.findOne({ username: username });
 
-  if(!user){
-    return res.status(404).json({message:"User not found."});
+  if (!user) {
+    return res.status(404).json({ message: "User not found." });
   }
   req.user = user;
   next();
@@ -34,20 +35,27 @@ function checkUserExists(req,res,next){
  * essa rota retorna:
  *  o usuário que foi criado
  */
-app.post('/users', (req,res)=>{
-  const {name, username} = req.body;
-  const userAlreadyExists = users.find((user)=>user.username===username);
-  if(userAlreadyExists){
-    return res.status(400).json({message:"User already exists"});
+app.post('/users', async (req, res) => {
+  const { name, username } = req.body;
+  const userAlreadyExists = await User.findOne({ username: username });
+
+  if (userAlreadyExists) {
+    return res.status(400).json({ message: "User already exists" });
   }
-  const user = {
-    id:uuidv4(),
+  const newUser = {
+    id: uuidv4(),
     name,
     username,
     series: []
   }
-  users.push(user)
-  return res.status(201).send(user);
+  users.push(newUser);
+
+  try {
+    await User.create(newUser);
+    return res.status(200).json({ mesage: "Resource created", newUser })
+  } catch (err) {
+    return res.status(500).json({ message: err });
+  }
 });
 
 /**
@@ -56,11 +64,16 @@ app.post('/users', (req,res)=>{
  *  username > header
  *  name > body
  */
-app.put('/users', checkUserExists, (req,res)=>{
-  const {user} = req;
-  const {name} = req.body;
-  user.name = name;
-  return res.status(201).send(user);
+app.put('/users', checkUserExists, async (req, res) => {
+  const { _id } = req.user;
+  const { name } = req.body;
+
+  try {
+    await User.updateOne({ _id: _id }, { name: name })
+    return res.status(201).send(req.user);
+  } catch (err) {
+    return res.status(500).json({ message: err });
+  }
 });
 
 /**
@@ -71,25 +84,32 @@ app.put('/users', checkUserExists, (req,res)=>{
  *  quantidade de episódios
  *  lista de episódios
  */
-app.post('/series', checkUserExists,(req,res)=>{
-  const {series} = req.user;
-  const {name, qt_episodes} = req.body;
+app.post('/series', checkUserExists, async (req, res) => {
+  const { _id, series } = req.user;
+  const { name, qt_episodes } = req.body;
   const episodes = [];
-  for(let i=1;i<=qt_episodes;i++){
+  for (let i = 1; i <= qt_episodes; i++) {
     const chap = {
-      number:i,
-      watched:false
+      number: i,
+      watched: false
     }
     episodes.push(chap);
   }
   const serie = {
-    id:uuidv4(),
+    id: uuidv4(),
     name,
     qt_episodes,
     episodes,
   }
+
   series.push(serie);
-  return res.status(201).send(serie);
+
+  try {
+    await User.updateOne({ _id: _id }, { series: series });
+    return res.status(201).send(serie);
+  } catch (err) {
+    return res.status(500).json({ message: err });
+  }
 });
 
 /**
@@ -100,8 +120,8 @@ app.post('/series', checkUserExists,(req,res)=>{
  * essa rota retorna:
  *  a lista de series do usuário
  */
-app.get('/series', checkUserExists, (req,res)=>{
-  const {series} = req.user;
+app.get('/series', checkUserExists, (req, res) => {
+  const { series } = req.user;
   return res.status(200).send(series);
 })
 
@@ -115,21 +135,29 @@ app.get('/series', checkUserExists, (req,res)=>{
  * essa rota retorna:
  *  os dados da série que foi modificada;
  */
-app.patch('/series/:id/watched', checkUserExists, (req,res)=>{
-  const {series} = req.user;
-  const {ep_number} = req.body;
-  const {id} = req.params;
-  const serie = series.find((serie)=>serie.id===id);
-  if(!serie){
-    return res.status(404).json({message:"Serie not found"});
+app.patch('/series/:id/watched', checkUserExists, async (req, res) => {
+  const { _id, series } = req.user;
+  const { ep_number } = req.body;
+  const { id } = req.params;
+  const serie = series.find((serie) => serie.id === id);
+  if (!serie) {
+    return res.status(404).json({ message: "Serie not found" });
   }
-  const {episodes} = serie;
-  const episode = episodes.find((episode)=>episode.number===ep_number);
-  if(!episode){
-    return res.status(404).json({message:"Invalid episode"});
+
+  const { episodes } = serie;
+  const episode = episodes.find((episode) => episode.number === ep_number);
+  if (!episode) {
+    return res.status(404).json({ message: "Invalid episode" });
   }
+
   episode.watched = true;
-  return res.status(201).json(serie);
+
+  try {
+    await User.updateOne({ _id: _id }, { series: series });
+    return res.status(201).json(serie);
+  } catch (err) {
+    return res.status(500).json({ message: err });
+  }
 });
 
 /**
@@ -141,16 +169,16 @@ app.patch('/series/:id/watched', checkUserExists, (req,res)=>{
  * essa rota retorna:
  *  o valor calculado do percentual de progresso sem decimais;
  */
-app.get('/series/:id/progress', checkUserExists,(req,res)=>{
-  const {series} = req.user;
-  const {id} = req.params;
-  const serie = series.find((serie)=>serie.id===id);
-  if(!serie){
-    return res.status(404).json({message:"Serie not found"});
+app.get('/series/:id/progress', checkUserExists, (req, res) => {
+  const { series } = req.user;
+  const { id } = req.params;
+  const serie = series.find((serie) => serie.id === id);
+  if (!serie) {
+    return res.status(404).json({ message: "Serie not found" });
   }
-  const {episodes} = serie;
-  const watched = episodes.filter((episode)=>episode.watched===true);
-  const progress = ((watched.length * 100)/serie.qt_episodes).toFixed(0);
+  const { episodes } = serie;
+  const watched = episodes.filter((episode) => episode.watched === true);
+  const progress = ((watched.length * 100) / serie.qt_episodes).toFixed(0);
   return res.status(200).send(progress);
 });
 
